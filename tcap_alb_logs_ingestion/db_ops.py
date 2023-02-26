@@ -32,7 +32,7 @@ class postgres_connection(object):
         self.connector.close()
 
 
-def find_date_to_start_from(config):
+def find_succesful_last_run_date(config):
     with postgres_connection(config) as db_conn:
         last_succesful_run_date_sql = 'select distinct run_date from tcap_analysis.tcap_alb_log_parsing_history where is_run_successful = TRUE order by run_date desc limit 1'
         db_conn.cursor.execute(last_succesful_run_date_sql)
