@@ -2,6 +2,7 @@ import argparse
 import configparser
 import logging
 from datetime import datetime, timedelta
+import pathlib
 
 import boto3
 
@@ -19,11 +20,11 @@ def find_all_prefixes_tosearch_for(search_start_date, base_s3_path):
     current_date = datetime.today()
     date_generated = [search_start_date + timedelta(days=x) for x in
                       range(0, (current_date - search_start_date).days + 1)]
+    base_prefix = base_s3_path.replace('s3://', '')
     for date in date_generated:
         m = '{:02d}'.format(date.month)
         d = '{:02d}'.format(date.day)
-        path = f'{base_s3_path}/{date.year}/{m}/{d}'
-        logging.info(f"Path to append  = {path}")
+        path = f'{base_prefix}/{date.year}/{m}/{d}/'
         prefixes_to_search.append(path)
     return prefixes_to_search
 
@@ -47,34 +48,20 @@ def main(config):
     starting_point = find_starting_point_to_parse(find_succesful_last_run_date(config),
                                                   config.get('s3', 'start_date'))
     prefixes_to_search = find_all_prefixes_tosearch_for(starting_point, config.get('s3', 'BASE_S3_PATH'))
-    print(f"Last good run date {starting_point}")
+    path = pathlib.PurePath(config.get('s3', 'BASE_S3_PATH'))
+    alb_logs_bucket = path.parts[1]
+    print(f"Last good run date {starting_point}, from the s3 alb logs bucket  {alb_logs_bucket}")
 
     # create a session with IAM roles
-    session = boto3.Session()
-
-    # create an S3 client using the session
-    s3_client = session.client('s3')
-
-    # Read last sync date from JSON file
-    last_sync_obj = read_json()
-    last_sync_string = "{}-{}-{}".format(last_sync_obj['ls_year'],
-                                         last_sync_obj['ls_month'], last_sync_obj['ls_day'])
-    last_sync = datetime.strptime(last_sync_string, '%Y-%m-%d')
-    # Calculate next day to sync and current day for comparison
-    next_day = last_sync + timedelta(days=1)
-    sync_upto = datetime.utcnow() - timedelta(days=1)
-    # Check if sync process is already up to date
-    if next_day > sync_upto:
-        print('WARN: Sync process is already up to date')
-        return
-    # Loop through each day from last sync day to current day and sync data
-    while next_day <= sync_upto:
-        print(next_day)
-        read_from_s3(next_day.year, next_day.month, next_day.day)
-        next_day = next_day + timedelta(days=1)
-    # wpdate last sync date in JSON file
-    last_sync = next_day - timedelta(days=1)
-    write_json(last_sync.year, last_sync.month, last_sync.day)
+    s3 = boto3.resource('s3')
+    for prefix in prefixes_to_search:
+        prefix = prefix.replace(alb_logs_bucket + '/', '')
+        logging.info(f"Searching for prefix - {prefix} in {alb_logs_bucket}")
+        objects = s3.Bucket(alb_logs_bucket).objects.filter(Prefix=prefix)
+        all_objects = list(objects.all())
+        logging.info(f'found {len(all_objects)} files for {prefix} in bucket {alb_logs_bucket}')
+        for object in all_objects:
+            logging.info(f"Found object {object.key} with prefix  {prefix}")
 
 
 if __name__ == '__main__':
