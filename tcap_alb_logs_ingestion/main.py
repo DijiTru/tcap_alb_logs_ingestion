@@ -1,6 +1,7 @@
 import boto3
 from datetime import datetime, timedelta
 from alb_parser import read_from_s3
+from tcap_alb_logs_ingestion.db_ops import find_date_to_start_from
 from utils import read_json, write_json
 import argparse
 import configparser
@@ -11,22 +12,11 @@ logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 logging.info('Admin logged in')
 
 
-def find_path_to_start_from(config):
-    DB_HOST = config.get('db', 'DB_HOST')
-    DB_PORT = config.get('db', 'DB_PORT')
-    DB_NAME = config.get('db', 'DB_NAME')
-    DB_USER = config.get('db', 'DB_USER')
-    DB_PASSWORD = config.get('db', 'DB_PASSWORD')
-    # Set up database connection using env variables
-    conn_str = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD}"
-    logging.info(f"connection string {conn_str}")
-    # conn = psycopg2.connect(conn_str)
-
-
 def main(config):
     # Set up S3 client
     # S3 access key unavailable
-    find_path_to_start_from(config)
+    last_good_run_date = find_date_to_start_from(config)
+    print(f"Last good run date {last_good_run_date}")
     # create a session with IAM roles
     session = boto3.Session()
 
