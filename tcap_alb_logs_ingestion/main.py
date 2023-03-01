@@ -1,13 +1,15 @@
 import argparse
 import configparser
-import logging
+import logging, re
 from datetime import datetime, timedelta
 import pathlib
+import io, gzip
+import pandas as pd
 
 import boto3
 
 from alb_parser import read_from_s3
-from tcap_alb_logs_ingestion.db_ops import find_succesful_last_run_date
+from tcap_alb_logs_ingestion.db_ops import find_succesful_last_run_date, persist_object_data
 from utils import read_json, write_json
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
@@ -38,8 +40,63 @@ def find_starting_point_to_parse(last_good_run_date, start_date):
         return last_good_run_date
 
 
-def find_files_for_prefix(prefix):
-    pass
+def get_gz_content(bucket_name, key):
+    s3 = boto3.client('s3')
+    s3_object = s3.get_object(Bucket=bucket_name, Key=key)
+    compressed_stream = io.BytesIO(s3_object['Body'].read())
+    gzip_file = gzip.GzipFile(fileobj=compressed_stream)
+    return gzip_file.readlines()
+
+
+def parselines(line):
+    entries = {}
+    fields = [
+        "type",
+        "timestamp",
+        "alb",
+        "client_ip",
+        "client_port",
+        "backend_ip",
+        "backend_port",
+        "request_processing_time",
+        "backend_processing_time",
+        "response_processing_time",
+        "alb_status_code",
+        "backend_status_code",
+        "received_bytes",
+        "sent_bytes",
+        "request_verb",
+        "request_url",
+        "request_proto",
+        "user_agent",
+        "ssl_cipher",
+        "ssl_protocol",
+        "target_group_arn",
+        "trace_id",
+        "domain_name",
+        "chosen_cert_arn",
+        "matched_rule_priority",
+        "request_creation_time",
+        "actions_executed",
+        "redirect_url",
+        "new_field",
+    ]
+    # Note: for Python 2.7 compatibility, use ur"" to prefix the regex and u"" to prefix the test string and substitution.
+    # REFERENCE: https://docs.aws.amazon.com/athena/latest/ug/application-load-balancer-logs.html#create-alb-table
+    regex = r"([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*):([0-9]*) ([^ ]*)[:-]([0-9]*) ([-.0-9]*) ([-.0-9]*) ([-.0-9]*) (|[-0-9]*) (-|[-0-9]*) ([-0-9]*) ([-0-9]*) \"([^ ]*) ([^ ]*) (- |[^ ]*)\" \"([^\"]*)\" ([A-Z0-9-]+) ([A-Za-z0-9.-]*) ([^ ]*) \"([^\"]*)\" \"([^\"]*)\" \"([^\"]*)\" ([-.0-9]*) ([^ ]*) \"([^\"]*)\" ($|\"[^ ]*\")(.*)"
+    matches = re.search(regex, line)
+    if matches:
+        for i, field in enumerate(fields):
+            end = ", " if i < len(fields) - 1 else "\n"
+            entries[field] = matches.group(i + 1)
+    logging.debug(entries)
+    return entries
+
+
+def parse_and_insert(alb_logs_bucket, key):
+    lines = get_gz_content(alb_logs_bucket, key)
+    full_file_path = f's3://{alb_logs_bucket}/{key}'
+    logging.info(f"Found {len(lines)} for file {full_file_path}")
 
 
 def main(config):
@@ -62,6 +119,14 @@ def main(config):
         logging.info(f'found {len(all_objects)} files for {prefix} in bucket {alb_logs_bucket}')
         for object in all_objects:
             logging.info(f"Found object {object.key} with prefix  {prefix}")
+            lines = get_gz_content(alb_logs_bucket, object.key)
+            entries = []
+            for line in lines:
+                logging.info(f"Line post parsing from gz {line} from file {object.key}")
+                entries.append(parselines(str(line)))
+            df = pd.DataFrame(entries)
+            df['file_name'] = object.key
+            persist_object_data(df, config)
 
 
 if __name__ == '__main__':

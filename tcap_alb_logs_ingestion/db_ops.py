@@ -1,6 +1,8 @@
 import logging
 
 import psycopg2
+from psycopg2 import sql
+from pandas import DataFrame
 
 
 class postgres_connection(object):
@@ -38,3 +40,15 @@ def find_succesful_last_run_date(config):
         db_conn.cursor.execute(last_succesful_run_date_sql)
         last_succesful_run_date = db_conn.cursor.fetchone()
     return last_succesful_run_date
+
+
+def persist_object_data(df: DataFrame, config):
+    with postgres_connection(config) as db_conn:
+        for index, row in df.iterrows():
+            query = sql.SQL("INSERT INTO tcap_analysis.tcap_alb_log_info ({}) VALUES ({})").format(
+                sql.SQL(', ').join(map(sql.Identifier, df.columns)),
+                sql.SQL(', ').join(sql.Placeholder() * len(df.columns))
+            )
+            data = tuple(row)
+            logging.info(f'executing query = {query} with data {data}')
+            db_conn.cursor.execute(query, data)
