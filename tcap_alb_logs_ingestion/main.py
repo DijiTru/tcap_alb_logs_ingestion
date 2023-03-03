@@ -8,9 +8,7 @@ import pandas as pd
 
 import boto3
 
-from alb_parser import read_from_s3
 from tcap_alb_logs_ingestion.db_ops import find_succesful_last_run_date, persist_object_data
-from utils import read_json, write_json
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 logging.info('Admin logged in')
